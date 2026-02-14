@@ -74,21 +74,44 @@ for name in "${SELECTED_TOOLBOXES[@]}"; do
   echo "📦 Recreating toolbox: $name"
   toolbox create "$name" --image "$image" -- $options
 
+  # Verify the container was actually created
+  if ! podman container exists "$name" 2>/dev/null; then
+    echo "⚠️  toolbox create did not persist container, retrying without extra options..."
+    toolbox create "$name" --image "$image"
+  fi
+
+  # Final verification
+  if podman container exists "$name" 2>/dev/null; then
+    echo "✅ Container verified: $name"
+  else
+    echo "❌ FAILED to create container: $name" >&2
+    continue
+  fi
+
   # --- Cleanup: keep only the most recent image for this tag ---
   repo="${image%:*}"
   tag="${image##*:}"
 
-  # Remove any other local images still carrying this exact tag but not the newest digest
-  while read -r id ref dig; do
-    [[ "$id" != "$new_id" ]] && podman image rm -f "$id" >/dev/null 2>&1 || true
-  done < <(podman images --digests --format '{{.ID}} {{.Repository}}:{{.Tag}} {{.Digest}}' \
-           | awk -v ref="$image" -v ndig="$new_digest" '$2==ref && $3!=ndig')
+  # Guard: skip cleanup if we couldn't determine the new image digest
+  if [[ -z "$new_id" || -z "$new_digest" ]]; then
+    echo "⚠️  Skipping image cleanup (could not determine new image ID/digest)"
+  else
+    # Remove any other local images still carrying this exact tag but not the newest digest
+    while read -r id ref dig; do
+      if [[ "$id" != "$new_id" ]]; then
+        echo "  🗑️  Removing old image: $id"
+        podman image rm -f "$id" >/dev/null 2>&1 || true
+      fi
+    done < <(podman images --digests --format '{{.ID}} {{.Repository}}:{{.Tag}} {{.Digest}}' \
+             | awk -v ref="$image" -v ndig="$new_digest" '$2==ref && $3!=ndig')
 
-  # Remove dangling images from this repository (typically prior pulls of this tag)
-  while read -r id; do
-    podman image rm -f "$id" >/dev/null 2>&1 || true
-  done < <(podman images --format '{{.ID}} {{.Repository}}:{{.Tag}}' \
-           | awk -v r="$repo" '$2==r":<none>" {print $1}')
+    # Remove dangling images from this repository (typically prior pulls of this tag)
+    while read -r id; do
+      echo "  🗑️  Removing dangling image: $id"
+      podman image rm -f "$id" >/dev/null 2>&1 || true
+    done < <(podman images --format '{{.ID}} {{.Repository}}:{{.Tag}}' \
+             | awk -v r="$repo" '$2==r":<none>" {print $1}')
+  fi
   # --- end cleanup ---
 
   echo "✅ $name refreshed"
