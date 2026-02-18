@@ -69,6 +69,7 @@ for name in "${SELECTED_TOOLBOXES[@]}"; do
 
   # Identify current image ID/digest for this tag
   new_id="$(podman image inspect --format '{{.Id}}' "$image" 2>/dev/null || true)"
+  new_id="${new_id:0:12}"  # truncate to short ID (podman images uses 12-char)
   new_digest="$(podman image inspect --format '{{.Digest}}' "$image" 2>/dev/null || true)"
 
   echo "📦 Recreating toolbox: $name"
